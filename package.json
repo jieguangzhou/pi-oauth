@@ -1,0 +1,49 @@
+{
+  "name": "pi-oauth",
+  "version": "0.0.1",
+  "description": "Installable pi package for OAuth/subscription-backed model providers not yet built into pi.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi-extension",
+    "xai",
+    "grok",
+    "oauth",
+    "x-search",
+    "twitter"
+  ],
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test:unit": "node tests/unit.mjs",
+    "test:package": "node tests/package-install.mjs",
+    "test:live:matrix": "node tests/live-model-matrix.mjs",
+    "test:live:tools": "node tests/live-tools.mjs",
+    "check": "npm run typecheck && npm run test:unit && npm run test:package",
+    "test": "npm run check",
+    "test:live": "npm run test:live:matrix && npm run test:live:tools",
+    "test:all": "npm run check && npm run test:live"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.8.3"
+  }
+}
