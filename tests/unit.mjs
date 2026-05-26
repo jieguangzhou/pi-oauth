@@ -59,6 +59,8 @@ assert.match(cursorSource, /authStorage\.set\(PROVIDER_ID/, 'Cursor refresh-mode
 assert.match(cursorSource, /PI_CURSOR_CONVERSATION_CACHE[^\n]+!== "0"/, 'Cursor conversation checkpoint cache should be enabled by default with an opt-out');
 assert.match(cursorSource, /exec_request/, 'Cursor provider should translate Cursor AgentService tool requests into pi tool calls');
 assert.match(cursorSource, /PI_CURSOR_ACTIVE_TOOLS/, 'Cursor same-bridge tool continuation should be guarded behind an explicit experimental flag');
+assert.match(cursorSource, /keepStreamOpenOnExecRequest:\s*true/, 'Cursor active tool runs should keep the AgentService bridge open across pi tool execution');
+assert.match(cursorAgentServiceSource, /keepStreamOpenOnExecRequest/, 'Cursor AgentService should support keeping streams open after exec_request handoff');
 assert.match(cursorSource, /hasVisibleAssistantOutput/, 'Cursor late stream fallback must not replay after visible assistant output');
 assert.match(cursorSource, /already-streamed answer as complete/, 'Cursor active run should finalize already-streamed text on late bridge errors');
 assert.doesNotMatch(cursorSource, /from ["']@cursor\/sdk["']/, 'Cursor subscription provider should not require Cursor API-key SDK auth');

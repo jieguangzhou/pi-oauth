@@ -988,10 +988,19 @@ export class AgentServiceClient {
 
           yield chunk;
 
-          if (chunk.type === "exec_request" || chunk.type === "interaction_query") {
-            // Tool/user-interaction handoff: caller will stop consuming this
-            // attempt and resume on the same live bridge, matching Cursor
-            // CLI's handler split.
+          if (chunk.type === "exec_request") {
+            // Non-active callers return after the tool handoff and let pi's
+            // normal context replay path continue the next turn. Active Cursor
+            // runs must keep this generator open so the background pump keeps
+            // the AgentService bridge alive while pi executes the tool; the
+            // next pi turn submits the tool result over that same bridge.
+            if (!requestForAttempt.keepStreamOpenOnExecRequest) return;
+            continue;
+          }
+
+          if (chunk.type === "interaction_query") {
+            // User-interaction handoff is not resumable through pi's tool-result
+            // path yet, so close the current attempt just like before.
             return;
           }
         }

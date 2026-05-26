@@ -604,6 +604,7 @@ async function pumpCursorActiveRun(run: CursorActiveRun, prompt: string, modelId
 			conversationId: run.state.conversationId,
 			...(run.state.checkpoint ? { checkpoint: run.state.checkpoint } : {}),
 			tools: cursorToolDefinitions(run.tools),
+			keepStreamOpenOnExecRequest: true,
 			...run.requestMeta,
 		};
 		for await (const chunk of run.state.client.chatStream(request)) {

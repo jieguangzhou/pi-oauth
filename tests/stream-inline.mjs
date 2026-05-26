@@ -100,6 +100,39 @@ assert.equal(toolObserved[1].type, 'exec_request');
 const done = await toolIter.next();
 assert.equal(done.done, true, 'chatStream should close right after exec_request');
 
+// Active Cursor tool runs are different: the background pump must keep the
+// AgentService bridge open after yielding exec_request so the next pi turn can
+// submit the tool result over the same live stream. If chatStream closes here,
+// sendToolResult later fails with "No active chat stream" and pi falls back to
+// replaying context, which makes Cursor repeat the same tool call/checkpoint.
+{
+  const activeClient = new AgentServiceClient('test-token', { baseUrl: 'https://example.invalid' });
+  const activeStub = gatedStub([
+    { type: 'exec_request', execRequest: { type: 'read', id: 2, path: '/bar' } },
+    { type: 'text', content: 'continued after tool result' },
+    { type: 'done' },
+  ]);
+  activeClient.chatStreamOnce = () => activeStub.generator;
+
+  const activeObserved = [];
+  const activeIter = activeClient
+    .chatStream({ message: 'read file', model: 'composer-2.5', keepStreamOpenOnExecRequest: true })
+    [Symbol.asyncIterator]();
+  for (;;) {
+    const { value, done } = await activeIter.next();
+    if (done) break;
+    activeObserved.push(value);
+    if (activeObserved.length >= 3) break;
+    activeStub.release();
+  }
+
+  assert.equal(activeObserved.length, 3);
+  assert.equal(activeObserved[0].type, 'exec_request');
+  assert.equal(activeObserved[1].type, 'text');
+  assert.equal(activeObserved[1].content, 'continued after tool result');
+  assert.equal(activeObserved[2].type, 'done');
+}
+
 // Unit checks on decideAlignment — the suffix-prefix overlap detector that
 // chatStream uses to dedup Resume text against the unsafe checkpoint window.
 // All decisions below pass force=true so we exercise the decision logic without

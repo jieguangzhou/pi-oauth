@@ -194,6 +194,12 @@ export interface AgentChatRequest {
     maxMode?: boolean;
     parameters?: Array<{ id: string; value: string }>;
   };
+  /**
+   * Keep the Cursor AgentService stream alive after yielding an exec_request.
+   * Active tool runs need this so pi can return the tool call to its loop,
+   * execute it, then submit the result back over the same live Cursor bridge.
+   */
+  keepStreamOpenOnExecRequest?: boolean;
 }
 
 export interface McpResult {
