@@ -2026,7 +2026,13 @@ export class AgentServiceClient {
 
   private estimateModelLimits(id: string): { contextWindow: number; maxTokens: number } {
     const normalized = id.toLowerCase();
-    if (normalized.includes("@1m") || normalized.includes("1m") || normalized.includes("gemini-3.1")) return { contextWindow: 1_000_000, maxTokens: 64_000 };
+    if (
+      normalized.includes("@1m") ||
+      normalized.includes("1m") ||
+      normalized.includes("gemini-3.1") ||
+      normalized.includes("composer-2.5") ||
+      normalized.includes("composer2.5")
+    ) return { contextWindow: 1_000_000, maxTokens: 64_000 };
     if (normalized.includes("codex") || normalized.includes("gpt")) return { contextWindow: 272_000, maxTokens: 128_000 };
     return { contextWindow: 200_000, maxTokens: 64_000 };
   }

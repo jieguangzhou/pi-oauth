@@ -131,8 +131,8 @@ class AsyncEventQueue<T> implements AsyncIterable<T> {
 
 const MODELS = [
 	model("auto", "Cursor Auto", true, 200_000, 64_000),
-	model("composer-2.5", "Composer 2.5", true, 200_000, 64_000, { input: 0.5, output: 2.5, cacheRead: 0.2, cacheWrite: 0 }),
-	model("composer-2.5-fast", "Composer 2.5 Fast", true, 200_000, 64_000, { input: 0.5, output: 2.5, cacheRead: 0.2, cacheWrite: 0 }),
+	model("composer-2.5", "Composer 2.5", true, 1_000_000, 64_000, { input: 0.5, output: 2.5, cacheRead: 0.2, cacheWrite: 0 }),
+	model("composer-2.5-fast", "Composer 2.5 Fast", true, 1_000_000, 64_000, { input: 0.5, output: 2.5, cacheRead: 0.2, cacheWrite: 0 }),
 	model("claude-4.6-sonnet", "Claude 4.6 Sonnet", true, 200_000, 64_000, { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 }),
 	model("claude-4.7-opus", "Claude 4.7 Opus", true, 200_000, 128_000, { input: 5, output: 25, cacheRead: 0.5, cacheWrite: 6.25 }),
 	model("gpt-5.3-codex", "GPT-5.3 Codex", true, 272_000, 128_000, { input: 1.75, output: 14, cacheRead: 0.175, cacheWrite: 0 }),
