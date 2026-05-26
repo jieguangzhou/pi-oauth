@@ -11,7 +11,8 @@
     "grok",
     "oauth",
     "x-search",
-    "twitter"
+    "twitter",
+    "cursor"
   ],
   "files": [
     "src/",
@@ -21,10 +22,11 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test:unit": "node tests/unit.mjs",
+    "test:unit": "node tests/unit.mjs && node tests/stream-inline.mjs",
     "test:package": "node tests/package-install.mjs",
     "test:live:matrix": "node tests/live-model-matrix.mjs",
     "test:live:tools": "node tests/live-tools.mjs",
+    "test:live:cursor": "node tests/live-cursor-session.mjs",
     "check": "npm run typecheck && npm run test:unit && npm run test:package",
     "test": "npm run check",
     "test:live": "npm run test:live:matrix && npm run test:live:tools",

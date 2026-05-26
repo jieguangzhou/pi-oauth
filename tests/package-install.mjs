@@ -15,14 +15,24 @@ try {
       refresh: 'test-refresh-token',
       expires: Date.now() + 60 * 60 * 1000,
     },
+    cursor: {
+      type: 'oauth',
+      access: 'test-cursor-access-token',
+      refresh: 'test-cursor-refresh-token',
+      expires: Date.now() + 60 * 60 * 1000,
+      cursorModels: [
+        { id: 'test-subscription-model', name: 'Test Subscription Model', reasoning: true, contextWindow: 123456, maxTokens: 12345 },
+      ],
+      cursorModelDiscoveryAt: Date.now(),
+    },
   }, null, 2));
 
-  const run = spawnSync('npx', [
+  const runPiList = (query) => spawnSync('npx', [
     'pi',
     '--no-extensions',
     '-e', root,
     '--list-models',
-    'xai-grok',
+    query,
   ], {
     cwd: root,
     env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
@@ -31,6 +41,7 @@ try {
     maxBuffer: 1024 * 1024,
   });
 
+  const run = runPiList('xai-grok');
   assert.equal(run.status, 0, `pi package load failed\nstdout:\n${run.stdout}\nstderr:\n${run.stderr}`);
   const output = `${run.stdout}\n${run.stderr}`;
   for (const id of [
@@ -42,6 +53,11 @@ try {
   ]) {
     assert.match(output, new RegExp(`\\b${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`), `model ${id} should be listed`);
   }
+
+  const cursorRun = runPiList('test-subscription-model');
+  assert.equal(cursorRun.status, 0, `Cursor package load failed\nstdout:\n${cursorRun.stdout}\nstderr:\n${cursorRun.stderr}`);
+  const cursorOutput = `${cursorRun.stdout}\n${cursorRun.stderr}`;
+  assert.match(cursorOutput, /cursor\s+test-subscription-model\b/, 'Cursor should expose subscription-discovered models through pi model listing');
 
   const pkg = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
   assert.deepEqual(pkg.pi.extensions, ['./src/index.ts']);
