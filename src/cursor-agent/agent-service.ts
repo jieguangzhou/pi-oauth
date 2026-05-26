@@ -275,6 +275,92 @@ const ALIGN_MIN_BUFFER_BYTES = 32;
 const ALIGN_MAX_BUFFER_BYTES = 4096;
 
 /**
+ * Node http2 sharp edge defense, scoped to a single ClientHttp2Session.
+ *
+ * When the underlying TLS socket fails (ECONNRESET, "Client network socket
+ * disconnected before secure TLS connection was established") while we have a
+ * pending request stream, Node's socketOnError listener (internal/http2/core)
+ * synchronously calls `session.destroy(error)`, and the destroy implementation
+ * synchronously throws ERR_HTTP2_STREAM_CANCEL while cancelling the pending
+ * stream. That throw originates from a process.nextTick callback and bypasses
+ * every error listener we attach to the session and stream, surfacing as
+ * uncaughtException and killing the process.
+ *
+ * We can intercept the throw at its source by wrapping THIS session instance's
+ * destroy method (not the prototype). Only the failure that matches the exact
+ * TLS-handshake-during-pending-stream pattern is swallowed; the rejection is
+ * forwarded through a guard promise so the chatStream loop can surface it as a
+ * normal error chunk and the existing SSE fallback / retry logic kicks in.
+ * Anything else is re-thrown so behaviour is unchanged. Restore unconditionally
+ * in finally to leave no trace on the session once it is closed.
+ */
+export interface Http2CancelGuard {
+  /** Rejects when the guard catches the targeted TLS-handshake closeSession throw. */
+  readonly promise: Promise<never>;
+  /** Restores the original destroy implementation on the wrapped session. */
+  restore(): void;
+}
+
+export function guardPendingHttp2ConnectCancel(h2Client: any): Http2CancelGuard {
+  const originalDestroy = h2Client.destroy;
+  let rejectGuard!: (error: Error) => void;
+  const promise = new Promise<never>((_resolve, reject) => {
+    rejectGuard = reject;
+  });
+  // Prevent unhandled-rejection warnings if the caller never awaits the guard.
+  promise.catch(() => {});
+
+  function guardedDestroy(this: any, error?: unknown, code?: number) {
+    try {
+      return originalDestroy.call(this, error, code);
+    } catch (thrown) {
+      if (isPendingHttp2TlsCancel(thrown, error, h2Client)) {
+        debugLog(
+          `[DEBUG] Caught Cursor HTTP/2 closeSession throw via per-session destroy guard: ${
+            thrown instanceof Error ? thrown.message : String(thrown)
+          }`
+        );
+        const surfaced = error instanceof Error ? error : (thrown instanceof Error ? thrown : new Error(String(thrown)));
+        rejectGuard(surfaced);
+        return undefined;
+      }
+      throw thrown;
+    }
+  }
+
+  Object.defineProperty(h2Client, "destroy", {
+    configurable: true,
+    writable: true,
+    value: guardedDestroy,
+  });
+
+  return {
+    promise,
+    restore() {
+      if (h2Client.destroy === guardedDestroy) {
+        Object.defineProperty(h2Client, "destroy", {
+          configurable: true,
+          writable: true,
+          value: originalDestroy,
+        });
+      }
+    },
+  };
+}
+
+export function isPendingHttp2TlsCancel(thrown: unknown, source: unknown, h2Client: any): boolean {
+  if (!thrown || typeof thrown !== "object") return false;
+  const err = thrown as { code?: unknown; message?: unknown };
+  if (err.code !== "ERR_HTTP2_STREAM_CANCEL") return false;
+  if (typeof err.message !== "string" || !/pending stream has been canceled/i.test(err.message)) return false;
+  // The pending-stream race only matters while the session is still connecting.
+  if (h2Client && h2Client.connecting !== true) return false;
+  const src = (source ?? {}) as { code?: unknown; message?: unknown };
+  const sourceText = `${typeof src.code === "string" ? src.code : ""} ${typeof src.message === "string" ? src.message : ""}`;
+  return /ECONNRESET|secure TLS connection|Client network socket disconnected|TLS|handshake|EPROTO|EHOSTUNREACH|ENETUNREACH/i.test(sourceText);
+}
+
+/**
  * Decide how much of `pending` overlaps with the trailing `unsafe` window that
  * was already streamed to the consumer before a mid-stream drop, so the caller
  * can yield `pending.slice(skip)` and avoid duplicates.
@@ -1112,6 +1198,10 @@ export class AgentServiceClient {
     h2Client.on("error", (error) => {
       debugLog("[DEBUG] HTTP/2 client session error:", error instanceof Error ? error.message : String(error));
     });
+    // Wrap this session's destroy so the Node http2 closeSession throw that
+    // fires when TLS handshake fails on a pending stream is caught at its
+    // source rather than escaping as uncaughtException. See helper docs above.
+    const h2CancelGuard = guardPendingHttp2ConnectCancel(h2Client);
     const requestHeaders = this.getHeaders(requestId);
     // Cursor CLI's native HTTP/2 AgentService/Run transport does not use the
     // HTTP/1.1 RunSSE streaming hint; the bidi stream itself carries responses.
@@ -1128,10 +1218,17 @@ export class AgentServiceClient {
 
     this.currentH2Stream = h2Stream;
 
-    const responseHeadersPromise = new Promise<Record<string, unknown>>((resolve, reject) => {
-      h2Stream.once("response", resolve);
-      h2Stream.once("error", reject);
-    });
+    const responseHeadersPromise = Promise.race([
+      new Promise<Record<string, unknown>>((resolve, reject) => {
+        h2Stream.once("response", resolve);
+        h2Stream.once("error", reject);
+      }),
+      h2CancelGuard.promise,
+    ]);
+    // Belt-and-suspenders: the guard promise rejects independently from the
+    // h2Stream events, attach a noop catch so unhandled-rejection warnings
+    // don't fire when the response settles via the normal path first.
+    responseHeadersPromise.catch(() => {});
 
     const timeout = setTimeout(() => h2Stream.close(), 120000);
     let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
@@ -1400,6 +1497,7 @@ export class AgentServiceClient {
       request.signal?.removeEventListener("abort", onAbort);
       try { h2Stream.close(); } catch {}
       try { h2Client.close(); } catch {}
+      h2CancelGuard.restore();
     }
   }
 
@@ -1923,12 +2021,15 @@ export class AgentServiceClient {
   private callUnaryProtoH2(baseUrl: string, path: string, body: Uint8Array): Promise<Uint8Array> {
     return new Promise((resolve, reject) => {
       const client = connectHttp2(baseUrl);
+      const h2CancelGuard = guardPendingHttp2ConnectCancel(client);
+      h2CancelGuard.promise.catch((error) => fail(error instanceof Error ? error : new Error(String(error))));
       const chunks: Buffer[] = [];
       let status = 0;
       let settled = false;
       const cleanup = () => {
         clearTimeout(timeout);
-        client.close();
+        try { client.close(); } catch {}
+        h2CancelGuard.restore();
       };
       const fail = (error: Error) => {
         if (settled) return;

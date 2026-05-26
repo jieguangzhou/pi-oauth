@@ -79,5 +79,8 @@ assert.match(xaiSource, /formatBooleanMenuRow/, 'xAI management menu should show
 assert.match(cursorSource, /auth\/poll/, 'Cursor module should poll Cursor OAuth completion');
 assert.doesNotMatch(source, /sk-[A-Za-z0-9_-]{12,}/, 'source should not contain API keys');
 assert.doesNotMatch(cursorAgentServiceSource, /const buffered: AgentStreamChunkType\[\]/, 'Cursor AgentService chatStream should yield chunks inline instead of buffering until turnEnded');
+assert.match(cursorAgentServiceSource, /guardPendingHttp2ConnectCancel\(h2Client\)/, 'Cursor AgentService should wrap the bidi session destroy to catch the Node http2 closeSession throw on TLS handshake failure');
+assert.match(cursorAgentServiceSource, /guardPendingHttp2ConnectCancel\(client\)/, 'Cursor unary RPC should wrap its session destroy with the same per-session guard');
+assert.doesNotMatch(cursorAgentServiceSource, /process\.on\(["']uncaughtException["']/, 'Cursor AgentService must not install process-level uncaughtException handlers');
 
 console.log('unit checks passed');

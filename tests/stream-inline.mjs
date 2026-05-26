@@ -11,7 +11,7 @@ const root = new URL('..', import.meta.url).pathname;
 const require = createRequire(join(root, 'tests/stream-inline.mjs'));
 const { createJiti } = require(join(root, 'node_modules/@earendil-works/pi-coding-agent/node_modules/jiti/lib/jiti.cjs'));
 const jiti = createJiti(root);
-const { AgentServiceClient, decideAlignment } = jiti(join(root, 'src/cursor-agent/agent-service.ts'));
+const { AgentServiceClient, decideAlignment, guardPendingHttp2ConnectCancel, isPendingHttp2TlsCancel } = jiti(join(root, 'src/cursor-agent/agent-service.ts'));
 
 const client = new AgentServiceClient('test-token', { baseUrl: 'https://example.invalid' });
 
@@ -221,6 +221,80 @@ assert.equal(done.done, true, 'chatStream should close right after exec_request'
   }
   const merged = ev.filter((c) => c.type === 'text').map((c) => c.content).join('');
   assert.equal(merged, 'recovered');
+}
+
+// isPendingHttp2TlsCancel: must match ONLY the exact Node http2 closeSession
+// throw that fires when the TLS handshake fails on a pending stream. Any
+// drift in this matcher would either let the host process crash or, worse,
+// swallow unrelated http2 errors.
+{
+  const connectingClient = { connecting: true };
+  const settledClient = { connecting: false };
+
+  const tlsCause = Object.assign(new Error('Client network socket disconnected before secure TLS connection was established'), { code: 'ECONNRESET' });
+  const realThrow = Object.assign(new Error('The pending stream has been canceled'), { code: 'ERR_HTTP2_STREAM_CANCEL' });
+  assert.equal(isPendingHttp2TlsCancel(realThrow, tlsCause, connectingClient), true, 'should match the real TLS-handshake closeSession throw');
+
+  assert.equal(isPendingHttp2TlsCancel(realThrow, tlsCause, settledClient), false, 'must not match after the session is connected');
+
+  const wrongCode = Object.assign(new Error('something else'), { code: 'ERR_HTTP2_STREAM_ERROR' });
+  assert.equal(isPendingHttp2TlsCancel(wrongCode, tlsCause, connectingClient), false, 'must not match other http2 errors');
+
+  const wrongCause = Object.assign(new Error('The pending stream has been canceled'), { code: 'ERR_HTTP2_STREAM_CANCEL' });
+  assert.equal(isPendingHttp2TlsCancel(wrongCause, new Error('user aborted'), connectingClient), false, 'must not match unrelated causes');
+
+  assert.equal(isPendingHttp2TlsCancel(null, tlsCause, connectingClient), false);
+  assert.equal(isPendingHttp2TlsCancel(undefined, tlsCause, connectingClient), false);
+  assert.equal(isPendingHttp2TlsCancel('string', tlsCause, connectingClient), false);
+}
+
+// guardPendingHttp2ConnectCancel: must intercept ONLY the targeted throw on
+// THIS session instance, restore the original destroy on cleanup, and never
+// touch the prototype or any other instance.
+{
+  const tlsCause = Object.assign(new Error('Client network socket disconnected before secure TLS connection was established'), { code: 'ECONNRESET' });
+  const throwingDestroy = function destroy() {
+    throw Object.assign(new Error('The pending stream has been canceled'), { code: 'ERR_HTTP2_STREAM_CANCEL' });
+  };
+
+  // Target case: pending TLS-handshake throw is swallowed and surfaces via the guard promise.
+  const trapped = { connecting: true, destroy: throwingDestroy };
+  const guard = guardPendingHttp2ConnectCancel(trapped);
+  assert.notEqual(trapped.destroy, throwingDestroy, 'destroy should be replaced after guarding');
+  let surfaced;
+  guard.promise.catch((err) => { surfaced = err; });
+  // simulate socketOnError calling destroy(error) with the TLS cause
+  const ret = trapped.destroy(tlsCause);
+  assert.equal(ret, undefined, 'guarded destroy should swallow the throw and return undefined');
+  await new Promise((r) => setImmediate(r));
+  assert.equal(surfaced, tlsCause, 'guard promise should reject with the original TLS cause');
+  guard.restore();
+  assert.equal(trapped.destroy, throwingDestroy, 'restore should put the original destroy back');
+
+  // Non-matching throw must be re-thrown unchanged.
+  const otherThrow = Object.assign(new Error('boom'), { code: 'ERR_HTTP2_PROTOCOL_ERROR' });
+  const otherDestroy = function destroy() { throw otherThrow; };
+  const otherClient = { connecting: true, destroy: otherDestroy };
+  const guard2 = guardPendingHttp2ConnectCancel(otherClient);
+  assert.throws(() => otherClient.destroy(new Error('unrelated')), /boom/, 'unrelated throws must propagate');
+  guard2.restore();
+  assert.equal(otherClient.destroy, otherDestroy);
+
+  // Non-throwing destroy is a no-op (the original return value passes through).
+  const normalDestroy = function destroy() { return 'ok'; };
+  const normalClient = { connecting: true, destroy: normalDestroy };
+  const guard3 = guardPendingHttp2ConnectCancel(normalClient);
+  assert.equal(normalClient.destroy(), 'ok', 'guarded destroy should pass through normal returns');
+  guard3.restore();
+  assert.equal(normalClient.destroy, normalDestroy);
+
+  // Same-session-only: guarding one client must not affect another.
+  const a = { connecting: true, destroy: throwingDestroy };
+  const b = { connecting: true, destroy: throwingDestroy };
+  const guardA = guardPendingHttp2ConnectCancel(a);
+  assert.equal(a.destroy === throwingDestroy, false, 'A wrapped');
+  assert.equal(b.destroy, throwingDestroy, 'B untouched');
+  guardA.restore();
 }
 
 console.log('stream inline checks passed');
